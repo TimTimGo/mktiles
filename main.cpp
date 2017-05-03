@@ -7,6 +7,7 @@
 #include <vector>
 #include <fstream>
 #include <cmath>
+#include <highgui.h>
 
 using namespace cv;
 using namespace std;
@@ -38,6 +39,7 @@ public:
 private:
   vector<ColorSpec> availableColors;
 public:
+  Palette() = default;
   Palette(string paletteFile)
   /// construct palette from csv file
   {
@@ -147,24 +149,58 @@ Mat circleMask(int32_t circlesLongSide, int32_t imageLongSide){
 }
 
 
+struct PaintState{
+  Mat original;
+  Mat image;
+  int sigma = 200, threshold = 500, amount = 100;
+  Palette palette;
+}state;
+
+void sharpen(Mat& img){
+  //from http://docs.opencv.org/master/d1/d10/classcv_1_1MatExpr.html#details
+  // sharpen image using "unsharp mask" algorithm
+  Mat blurred; double sigma = max(1,state.sigma)/100.0, threshold = max(1,state.threshold)/100.0, amount = max(1,state.amount)/100.0;
+  GaussianBlur(img, blurred, Size(), sigma, sigma);
+  Mat lowContrastMask = abs(img - blurred) < threshold;
+  Mat sharpened = img*(1+amount) + blurred*(-amount);
+  img.copyTo(sharpened, lowContrastMask);
+  img=sharpened;
+}
+
+void repaint(){
+  state.image = state.original.clone();
+  Mat& image = state.image;
+  auto mask = circleMask(48, max(image.rows, image.cols));
+  sharpen(image);
+  groupByMask(image, mask, 6, state.palette);
+  Mat disp;
+  resize(image, disp, Size(1024,768));
+  imshow("Display Image", disp);
+}
+
+void on_trackbar( int, void* ){
+  repaint();
+}
+
 int main(int argc, char* argv[]){
   if (argc < 3){
     std::cout << "usage: " << argv[0] << " <paletteFile> <inputImage> [<outputImage>]\n";
     return -1;
   }
-  Palette palette(argv[1]);
-  Mat image;
-  image = imread(argv[2], 1);
-  if (!image.data){
+  state.palette = Palette(argv[1]);
+  state.original = imread(argv[2], 1);
+  if (!state.original.data){
     printf("No image data \n");
     return -1;
   }
-  auto mask = circleMask(100, max(image.rows, image.cols));
-  groupByMask(image, mask, 6, palette);
+
   namedWindow("Display Image", WINDOW_AUTOSIZE);
-  imshow("Display Image", image);
-  if(argc >=4)
-    imwrite(argv[3], image);
+  createTrackbar( "Amount", "Display Image", &state.amount ,1000, on_trackbar);
+  createTrackbar( "Sigma", "Display Image", &state.sigma ,1000, on_trackbar);
+  createTrackbar( "BG Threshold", "Display Image", &state.threshold ,1000, on_trackbar);
+  repaint();
   waitKey(0);
+  if(argc >=4)
+    imwrite(argv[3], state.image);
   return 0;
 }
