@@ -24,6 +24,11 @@ public:
       uint16_t g;
       uint16_t b;
     } color;
+    struct ColorLab{
+      float l;
+      float a;
+      float b;
+    } colorLab;
     struct Availability{
       union{
         uint8_t indexed[4];
@@ -65,18 +70,38 @@ public:
           in >> create.availability.named.round2x2 &&
           in.ignore(numeric_limits<streamsize>::max(), '\n'))
       availableColors.push_back(create);
+    Mat rgb(availableColors.size(),1, CV_8UC3);
+    int i = 0;
+    for(auto& spec : availableColors){
+      rgb.at<Vec3b>(i,0)[0] = spec.color.b;
+      rgb.at<Vec3b>(i,0)[1] = spec.color.g;
+      rgb.at<Vec3b>(i,0)[2] = spec.color.r;
+      i++;
+    }
+    Mat rgbFloat;
+    rgb.convertTo(rgbFloat, CV_32FC3, 1./255);
+    Mat lab;
+    cvtColor(rgbFloat, lab, COLOR_BGR2Lab);
+    i = 0;
+    for(auto& spec : availableColors){
+      spec.colorLab.l = lab.at<Vec3f>(i,0)[0];
+      spec.colorLab.a = lab.at<Vec3f>(i,0)[1];
+      spec.colorLab.b = lab.at<Vec3f>(i,0)[2];
+      i++;
+    }
   }
 
-  ColorSpec* getSpecFromPalette(ColorSpec::Color c, int partId){
+  ColorSpec* getSpecFromPalette(ColorSpec::ColorLab c, int partId){
     double minDist = std::numeric_limits<double>::max();
     ColorSpec* minSpec = nullptr;
     for(auto& spec : availableColors){
-      double dist = pow(c.r-(double)spec.color.r,2) + pow(c.g-(double)spec.color.g,2) + pow(c.b-(double)spec.color.b,2);
+      double dist = pow(c.l-spec.colorLab.l,2) + pow(c.a-spec.colorLab.a,2) + pow(c.b-spec.colorLab.b,2);
       if(spec.availability.indexed[partId] == '+' && dist < minDist){
         minDist=dist;
         minSpec=&spec;
       }
     }
+    assert(minSpec != nullptr);
     return minSpec;
   }
 
@@ -105,8 +130,6 @@ MaskConfig circleMask(int32_t circlesLongSide, int32_t imageLongSide){
 template<typename C>
 void groupByMask(Mat image, MaskConfig mc, uint64_t groups, Palette& palette, C onTileDone){
   Mat& mask = mc.mask;
-  // accept only char type matrices
-  CV_Assert(image.depth() == CV_8U);
   // accept only images with 3 channels
   CV_Assert(image.channels() == 3);
   uint64_t tileHeight = mask.rows;
@@ -119,14 +142,13 @@ void groupByMask(Mat image, MaskConfig mc, uint64_t groups, Palette& palette, C 
                        Range(c, std::min(c + tileWidth, static_cast<uint64_t>(image.cols))));//no data copying here
       // create group averages for the tile
       uint64_t count[groups*3];
-      uint64_t sum[groups*3];
-      uint8_t avg[groups*3];
+      double sum[groups*3];
+      Palette::ColorSpec* avg[groups];
       for(int i = 0; i < 3*groups; i++){
         count[i] = 0;
         sum[i] = 0;
-        avg[i] = 0;
       }
-      for(MatIterator_<Vec3b> it = tile.begin<Vec3b>(), end = tile.end<Vec3b>(); it != end; ++it){
+      for(MatIterator_<Vec3f> it = tile.begin<Vec3f>(), end = tile.end<Vec3f>(); it != end; ++it){
         const auto pos = it.pos();
         const auto group = mask.at<char>(pos);
         // add current position's value to aggregate of group
@@ -140,28 +162,24 @@ void groupByMask(Mat image, MaskConfig mc, uint64_t groups, Palette& palette, C 
         const int i = group*3;
         // find closest color
         auto spec = palette.getSpecFromPalette({
-            static_cast<uint16_t>(sum[i+2]/std::max(count[i+2], 1ull)),
-            static_cast<uint16_t>(sum[i+1]/std::max(count[i+1], 1ull)),
-            static_cast<uint16_t>(sum[i]/std::max(count[i], 1ull))},
+            static_cast<float>(sum[i]/std::max(count[i], 1ull)),
+            static_cast<float>(sum[i+1]/std::max(count[i+1], 1ull)),
+            static_cast<float>(sum[i+2]/std::max(count[i+2], 1ull))},
             mc.groupIdToPart[group]);
-        avg[i] = spec->color.b;
-        avg[i+1] = spec->color.g;
-        avg[i+2] = spec->color.r;
+        avg[group] = spec;
       }
       //write group values into image
-      for(MatIterator_<Vec3b> it = tile.begin<Vec3b>(), end = tile.end<Vec3b>(); it != end; ++it){
+      for(MatIterator_<Vec3f> it = tile.begin<Vec3f>(), end = tile.end<Vec3f>(); it != end; ++it){
         auto pos = it.pos();
         auto group = mask.at<char>(pos);
         // lookup average and write it back to image
-        for(int i = 0; i < 3; i++){
-          (*it)[i] = avg[group*3+i];
-        }
+        (*it)[0] = avg[group]->colorLab.l;
+        (*it)[1] = avg[group]->colorLab.a;
+        (*it)[2] = avg[group]->colorLab.b;
       }
       onTileDone(rc,cc,avg);
     }
 }
-
-
 
 struct PaintState{
   Mat original;
@@ -184,20 +202,20 @@ void sharpen(Mat& img){
   img=sharpened;
 }
 
-void writeLDrawFile(int x, int y, uint8_t* avgs, ofstream& ldFile)
+void writeLDrawFile(int x, int y, Palette::ColorSpec* avgs[], ofstream& ldFile)
 /// Write mosaic in LDraw format into ldFile 
 {
-  ldFile << "1 0x2" << std::hex << static_cast<int>(avgs[3*5+2]) << static_cast<int>(avgs[3*5+1]) << static_cast<int>(avgs[3*5])
+  ldFile << "1 0x2" << std::hex << static_cast<int>(avgs[5]->color.r) << static_cast<int>(avgs[5]->color.g) << static_cast<int>(avgs[5]->color.b)
          << std::dec << " " << (y * 20 * 2) << " -16 " << (-x * 20 * 2 + 10) <<   " 1 0 0 0 1 0 -0 0 1 6141.dat\n";
-  ldFile << "1 0x2" << std::hex << static_cast<int>(avgs[3*4+2]) << static_cast<int>(avgs[3*4+1]) << static_cast<int>(avgs[3*4])
+  ldFile << "1 0x2" << std::hex << static_cast<int>(avgs[4]->color.r) << static_cast<int>(avgs[4]->color.g) << static_cast<int>(avgs[4]->color.b)
          << std::dec << " " << (y * 20 * 2) << " -8 " << (-x * 20 * 2 + 10) <<     " 1 0 0 0 1 0 -0 0 1 18674.dat\n";
-  ldFile << "1 0x2" << std::hex << static_cast<int>(avgs[3*0+2]) << static_cast<int>(avgs[3*0+1]) << static_cast<int>(avgs[3*0])
+  ldFile << "1 0x2" << std::hex << static_cast<int>(avgs[0]->color.r) << static_cast<int>(avgs[0]->color.g) << static_cast<int>(avgs[0]->color.b)
          << std::dec << " " << (y * 20 * 2 - 10) << " 0 " << (-x * 20 * 2) <<      " 1 0 0 0 1 0 -0 0 1 3024.dat\n";
-  ldFile << "1 0x2" << std::hex << static_cast<int>(avgs[3*1+2]) << static_cast<int>(avgs[3*1+1]) << static_cast<int>(avgs[3*1])
+  ldFile << "1 0x2" << std::hex << static_cast<int>(avgs[1]->color.r) << static_cast<int>(avgs[1]->color.g) << static_cast<int>(avgs[1]->color.b)
          << std::dec << " " << (y * 20 * 2 - 10) << " 0 " << (-x * 20 * 2 + 20) << " 1 0 0 0 1 0 -0 0 1 3024.dat\n";
-  ldFile << "1 0x2" << std::hex << static_cast<int>(avgs[3*2+2]) << static_cast<int>(avgs[3*2+1]) << static_cast<int>(avgs[3*2])
+  ldFile << "1 0x2" << std::hex << static_cast<int>(avgs[2]->color.r) << static_cast<int>(avgs[2]->color.g) << static_cast<int>(avgs[2]->color.b)
          << std::dec << " " << (y * 20 * 2 + 10) << " 0 " << (-x * 20 * 2) <<      " 1 0 0 0 1 0 -0 0 1 3024.dat\n";
-  ldFile << "1 0x2" << std::hex << static_cast<int>(avgs[3*3+2]) << static_cast<int>(avgs[3*3+1]) << static_cast<int>(avgs[3*3])
+  ldFile << "1 0x2" << std::hex << static_cast<int>(avgs[3]->color.r) << static_cast<int>(avgs[3]->color.g) << static_cast<int>(avgs[3]->color.b)
          << std::dec << " " << (y * 20 * 2 + 10) << " 0 " << (-x * 20 * 2 + 20) << " 1 0 0 0 1 0 -0 0 1 3024.dat\n";
 }
 
@@ -210,14 +228,13 @@ void repaint(){
   if (state.ldrawFileName.size() && state.writeLDrawFile)
     ldFile = ofstream(state.ldrawFileName);
   if(state.showMosaic)
-    groupByMask(image, mc, 6, state.palette, [&ldFile](int x, int y, uint8_t* avgs){
+    groupByMask(image, mc, 6, state.palette, [&ldFile](int x, int y, Palette::ColorSpec* avgs[]){
         if (state.ldrawFileName.size() && state.writeLDrawFile)
-          writeLDrawFile(x,y,avgs, ldFile);
+          writeLDrawFile(x,y,avgs,ldFile);
       });
   Mat disp;
-  //resize(image, disp, Size(1024,768));
-  //imshow("Display Image", disp);
-  imshow("Display Image", image);
+  cvtColor(image, disp, COLOR_Lab2BGR);
+  imshow("Display Image", disp);
 }
 
 void on_trackbar( int, void* ){
@@ -230,10 +247,16 @@ int main(int argc, char* argv[]){
     return -1;
   }
   state.palette = Palette(argv[1]);
-  state.original = imread(argv[2], 1);
-  if (!state.original.data){
+  Mat original = imread(argv[2], 1);
+  if (!original.data){
     printf("No image data \n");
     return -1;
+  }
+
+  {
+    Mat rgbFloat;
+    original.convertTo(rgbFloat, CV_32FC3, 1./255);
+    cvtColor(rgbFloat, state.original, COLOR_BGR2Lab);
   }
 
   if(argc>=5)
@@ -255,7 +278,10 @@ int main(int argc, char* argv[]){
     repaint();
     state.writeLDrawFile = false;
   }
-  if(argc >=4)
-    imwrite(argv[3], state.image);
+  if(argc >=4){
+    Mat write;
+    cvtColor(state.image, write, COLOR_Lab2BGR);
+    imwrite(argv[3],write);
+  }
   return 0;
 }
