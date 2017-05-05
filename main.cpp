@@ -12,6 +12,7 @@
 using namespace cv;
 using namespace std;
 
+
 class Palette
 /// describes a palette of available colors
 {
@@ -91,21 +92,35 @@ public:
     }
   }
 
-  ColorSpec* getSpecFromPalette(ColorSpec::ColorLab c, int partId){
-    double minDist = std::numeric_limits<double>::max();
-    ColorSpec* minSpec = nullptr;
-    for(auto& spec : availableColors){
-      double dist = pow(c.l-spec.colorLab.l,2) + pow(c.a-spec.colorLab.a,2) + pow(c.b-spec.colorLab.b,2);
-      if(spec.availability.indexed[partId] == '+' && dist < minDist){
-        minDist=dist;
-        minSpec=&spec;
-      }
-    }
-    assert(minSpec != nullptr);
-    return minSpec;
-  }
+  ColorSpec* getSpecFromPalette(ColorSpec::ColorLab c, int partId);
 
 };
+
+
+struct PaintState{
+  Mat original;
+  Mat image;
+  int sigma = 200, threshold = 500, amount = 100, luminanceFactor = 500;
+  Palette palette;
+  bool showMosaic = true;
+  bool writeLDrawFile = false;
+  string ldrawFileName;
+}state;
+
+
+Palette::ColorSpec* Palette::getSpecFromPalette(ColorSpec::ColorLab c, int partId){
+  double minDist = std::numeric_limits<double>::max();
+  ColorSpec* minSpec = nullptr;
+  for(auto& spec : availableColors){
+    double dist = (state.luminanceFactor/500.0) * pow(c.l-spec.colorLab.l,2) + pow(c.a-spec.colorLab.a,2) + pow(c.b-spec.colorLab.b,2);
+    if(spec.availability.indexed[partId] == '+' && dist < minDist){
+      minDist=dist;
+      minSpec=&spec;
+    }
+  }
+  assert(minSpec != nullptr);
+  return minSpec;
+}
 
 struct MaskConfig{
   Mat mask;
@@ -180,16 +195,6 @@ void groupByMask(Mat image, MaskConfig mc, uint64_t groups, Palette& palette, C 
       onTileDone(rc,cc,avg);
     }
 }
-
-struct PaintState{
-  Mat original;
-  Mat image;
-  int sigma = 200, threshold = 500, amount = 100;
-  Palette palette;
-  bool showMosaic = true;
-  bool writeLDrawFile = false;
-  string ldrawFileName;
-}state;
 
 void sharpen(Mat& img){
   //from http://docs.opencv.org/master/d1/d10/classcv_1_1MatExpr.html#details
@@ -267,6 +272,7 @@ int main(int argc, char* argv[]){
   createTrackbar( "Amount", "Toolbar", &state.amount ,1000, on_trackbar);
   createTrackbar( "Sigma", "Toolbar", &state.sigma ,1000, on_trackbar);
   createTrackbar( "BG Threshold", "Toolbar", &state.threshold ,1000, on_trackbar);
+  createTrackbar( "Luminance importance", "Toolbar", &state.luminanceFactor ,1000, on_trackbar);
   repaint();
   int pressedKey = 0;
   while(pressedKey != 27 /*Esc*/ && pressedKey != 113 /*q*/){
@@ -280,7 +286,11 @@ int main(int argc, char* argv[]){
   }
   if(argc >=4){
     Mat write;
-    cvtColor(state.image, write, COLOR_Lab2BGR);
+    {
+      Mat rgb;
+      cvtColor(state.image, rgb, COLOR_Lab2BGR);
+      rgb.convertTo(write, CV_8UC3, 255);
+    }
     imwrite(argv[3],write);
   }
   return 0;
