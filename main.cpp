@@ -42,9 +42,7 @@ public:
       };
     } availability;
   };
-private:
   vector<ColorSpec> availableColors;
-public:
   Palette() = default;
   Palette(string paletteFile)
   /// construct palette from csv file
@@ -104,7 +102,9 @@ struct PaintState{
   Palette palette;
   bool showMosaic = true;
   bool writeLDrawFile = false;
+  bool writePartList = false;
   string ldrawFileName;
+  string partList;
 }state;
 
 
@@ -125,6 +125,8 @@ Palette::ColorSpec* Palette::getSpecFromPalette(ColorSpec::ColorLab c, int partI
 struct MaskConfig{
   Mat mask;
   std::vector<uint8_t> groupIdToPart;
+  uint32_t nrGroups;
+  uint32_t nrOfParts;
 };
 
 MaskConfig circleMask(int32_t circlesLongSide, int32_t imageLongSide){
@@ -139,6 +141,8 @@ MaskConfig circleMask(int32_t circlesLongSide, int32_t imageLongSide){
   circle(mask, {sideLength/2,sideLength/2}, sideLength/2, 4, -1);
   circle(mask, {sideLength/2,sideLength/2}, sideLength/5, 5, -1);
   mc.groupIdToPart = {1,1,1,1,3,2};
+  mc.nrGroups = 6;
+  mc.nrOfParts = 4; // groups in palette are numbered from 0 to 3
   return mc;
 }
 
@@ -232,11 +236,33 @@ void repaint(){
   ofstream ldFile;
   if (state.ldrawFileName.size() && state.writeLDrawFile)
     ldFile = ofstream(state.ldrawFileName);
-  if(state.showMosaic)
-    groupByMask(image, mc, 6, state.palette, [&ldFile](int x, int y, Palette::ColorSpec* avgs[]){
+  map<string,vector<uint64_t>> partCounts;
+  for(auto& spec: state.palette.availableColors)
+    for(uint32_t part = 0; part < mc.nrOfParts; ++part)
+      partCounts[spec.name].push_back(0);
+  if(state.showMosaic){
+    groupByMask(image, mc, 6, state.palette, [&ldFile, &mc, &partCounts](int x, int y, Palette::ColorSpec* avgs[]){
         if (state.ldrawFileName.size() && state.writeLDrawFile)
           writeLDrawFile(x,y,avgs,ldFile);
+        if(state.partList.size() && state.writePartList){
+          for(uint32_t group = 0; group < mc.nrGroups; ++group){
+            auto part = mc.groupIdToPart[group];
+            auto color = avgs[part];
+            partCounts[color->name][part] += 1;
+          }
+        }
       });
+    if(state.partList.size() && state.writePartList){
+      ofstream partList(state.partList);
+      for(auto it : partCounts){
+        partList << it.first;
+        for(auto part : it.second){
+          partList << "," << part;
+        }
+        partList << "\n";
+      }
+    }
+  }
   Mat disp;
   cvtColor(image, disp, COLOR_Lab2BGR);
   imshow("Display Image", disp);
@@ -286,8 +312,10 @@ int main(int argc, char* argv[]){
     cvtColor(rgbFloat, state.original, COLOR_BGR2Lab);
   }
 
-  if(argc>=4)
+  if(argc>=4){
     state.ldrawFileName = string(argv[3]) + ".ldr";
+    state.partList = string(argv[3]) + ".csv";
+  }
 
   namedWindow("Display Image",CV_WINDOW_AUTOSIZE | CV_WINDOW_KEEPRATIO | CV_GUI_EXPANDED);
   namedWindow("Toolbar",CV_WINDOW_NORMAL | CV_WINDOW_FREERATIO | CV_GUI_EXPANDED);
@@ -300,11 +328,13 @@ int main(int argc, char* argv[]){
   while(pressedKey != 27 /*Esc*/ && pressedKey != 113 /*q*/){
     pressedKey = waitKey(0);
     state.writeLDrawFile = pressedKey == 51 /* 3 */;
+    state.writePartList = pressedKey == 112 /* p */;
     state.palette = Palette(argv[1]);
     if(pressedKey==109)
       state.showMosaic = !state.showMosaic;
     repaint();
     state.writeLDrawFile = false;
+    state.writePartList = false;
   }
   if(argc >=4){
     Mat write;
