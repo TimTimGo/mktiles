@@ -100,7 +100,7 @@ public:
 struct PaintState{
   Mat original;
   Mat image;
-  int sigma = 200, threshold = 500, amount = 100, luminanceFactor = 500;
+  int sigma = 200, threshold = 500, amount = 100, luminanceFactor = 500, circlesLongSide = 48;
   Palette palette;
   bool showMosaic = true;
   bool writeLDrawFile = false;
@@ -227,7 +227,7 @@ void writeLDrawFile(int x, int y, Palette::ColorSpec* avgs[], ofstream& ldFile)
 void repaint(){
   state.image = state.original.clone();
   Mat& image = state.image;
-  auto mc = circleMask(48, max(image.rows, image.cols));
+  auto mc = circleMask(state.circlesLongSide, max(image.rows, image.cols));
   sharpen(image);
   ofstream ldFile;
   if (state.ldrawFileName.size() && state.writeLDrawFile)
@@ -246,9 +246,30 @@ void on_trackbar( int, void* ){
   repaint();
 }
 
+Mat resizeToBeDivisible(Mat image)
+/// resize image so that it's long side is a multiple of state.circlesLongSide
+{
+  // resize so that the long side of the image is exactly
+  // divisible by state.circlesLongSide
+  uint64_t rows;
+  uint64_t cols;
+  if(image.rows < image.cols){
+    auto rest = (image.rows % state.circlesLongSide);
+    rows = image.rows - rest;
+    cols = image.cols * rows / image.rows;
+  }else{
+    auto rest = (image.cols % state.circlesLongSide);
+    cols = image.cols - rest;
+    rows = image.rows * cols / image.cols;
+  }
+  Mat result;
+  resize(image, result, Size(cols, rows));
+  return result;
+}
+
 int main(int argc, char* argv[]){
   if (argc < 3){
-    std::cout << "usage: " << argv[0] << " <paletteFile> <inputImage> [<outputImage>] [<outputLDrawFile>]\n";
+    std::cout << "usage: " << argv[0] << " <paletteFile> <inputImage> [<fileName>]\n";
     return -1;
   }
   state.palette = Palette(argv[1]);
@@ -260,12 +281,13 @@ int main(int argc, char* argv[]){
 
   {
     Mat rgbFloat;
+    original = resizeToBeDivisible(original);
     original.convertTo(rgbFloat, CV_32FC3, 1./255);
     cvtColor(rgbFloat, state.original, COLOR_BGR2Lab);
   }
 
-  if(argc>=5)
-    state.ldrawFileName = argv[4];
+  if(argc>=4)
+    state.ldrawFileName = string(argv[3]) + ".ldr";
 
   namedWindow("Display Image",CV_WINDOW_AUTOSIZE | CV_WINDOW_KEEPRATIO | CV_GUI_EXPANDED);
   namedWindow("Toolbar",CV_WINDOW_NORMAL | CV_WINDOW_FREERATIO | CV_GUI_EXPANDED);
@@ -291,7 +313,7 @@ int main(int argc, char* argv[]){
       cvtColor(state.image, rgb, COLOR_Lab2BGR);
       rgb.convertTo(write, CV_8UC3, 255);
     }
-    imwrite(argv[3],write);
+    imwrite(string(argv[3])+".jpg",write);
   }
   return 0;
 }
