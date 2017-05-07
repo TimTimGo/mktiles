@@ -205,7 +205,7 @@ void groupByMask(Mat image, MaskConfig mc, uint64_t groups, Palette& palette, C 
       groupValues[5] += quantError;
       // quantize small circle
       avg[5] = palette.getSpecFromPalette(groupValues[5], mc.groupIdToPart[5]);
-      quantError = static_cast<Vec3f>(avg[5]->colorLab) - groupValues[5];
+      quantError = groupValues[5] - static_cast<Vec3f>(avg[5]->colorLab);
       quantError /= 4;
       // quantize 1x1
       Vec3f remainingError;
