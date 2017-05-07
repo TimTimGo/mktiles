@@ -29,6 +29,11 @@ public:
       float l;
       float a;
       float b;
+      ColorLab() = default;
+      ColorLab(Vec3f v):l(v[0]),a(v[1]),b(v[2]){}
+      operator Vec3f()const{
+        return Vec3f(l,a,b);
+      }
     } colorLab;
     struct Availability{
       union{
@@ -153,9 +158,15 @@ void groupByMask(Mat image, MaskConfig mc, uint64_t groups, Palette& palette, C 
   CV_Assert(image.channels() == 3);
   uint64_t tileHeight = mask.rows;
   uint64_t tileWidth = mask.cols;
+  uint64_t nrCols = image.cols / tileWidth + 2;
 
   // iterate over tiles of size mask
-  for (int r = 0, rc=0; r < image.rows; r += tileHeight, rc++)
+
+  vector<Vec3f> currentRow;
+  vector<Vec3f> nextRow;
+  currentRow.assign(nrCols, {0,0,0});
+  nextRow.assign(nrCols, {0,0,0});
+  for (int r = 0, rc=0; r < image.rows; r += tileHeight, rc++){
     for (int c = 0, cc=0; c < image.cols; c += tileWidth, cc++){
       Mat tile = image(Range(r, std::min(r + tileHeight, static_cast<uint64_t>(image.rows))),
                        Range(c, std::min(c + tileWidth, static_cast<uint64_t>(image.cols))));//no data copying here
@@ -176,17 +187,41 @@ void groupByMask(Mat image, MaskConfig mc, uint64_t groups, Palette& palette, C 
           sum[group*3+i] += (*it)[i];
         }
       }
+
+      vector<Vec3f> groupValues;
       //create group values
       for(int group = 0; group < groups; group++){
         const int i = group*3;
-        // find closest color
-        auto spec = palette.getSpecFromPalette({
-            static_cast<float>(sum[i]/std::max(count[i], 1ull)),
-            static_cast<float>(sum[i+1]/std::max(count[i+1], 1ull)),
-            static_cast<float>(sum[i+2]/std::max(count[i+2], 1ull))},
-            mc.groupIdToPart[group]);
-        avg[group] = spec;
+        groupValues.push_back({
+                static_cast<float>(sum[i]/std::max(count[i], 1ull)),
+                static_cast<float>(sum[i+1]/std::max(count[i+1], 1ull)),
+                static_cast<float>(sum[i+2]/std::max(count[i+2], 1ull))});
       }
+      //quantize large circle
+      //TODO: consider error from current row
+      avg[4] = palette.getSpecFromPalette(groupValues[4] + currentRow[cc], mc.groupIdToPart[4]);
+      Vec3f quantError = groupValues[4] - static_cast<Vec3f>(avg[4]->colorLab);
+      // propagate error to small circle
+      groupValues[5] += quantError;
+      // quantize small circle
+      avg[5] = palette.getSpecFromPalette(groupValues[5], mc.groupIdToPart[5]);
+      quantError = static_cast<Vec3f>(avg[5]->colorLab) - groupValues[5];
+      quantError /= 4;
+      // quantize 1x1
+      Vec3f remainingError;
+      for(int i=0;i<4;++i){
+        Vec3f targetColor = groupValues[i]+quantError;
+        avg[i] = palette.getSpecFromPalette(targetColor, mc.groupIdToPart[i]);
+        remainingError += targetColor - static_cast<Vec3f>(avg[i]->colorLab);
+      }
+      // propagate error
+      currentRow[cc+1] += remainingError * (7/16.);
+      if(cc > 0)
+        nextRow[cc-1] += remainingError * (3/16.);
+      nextRow[cc] += remainingError * (5/16.);
+      nextRow[cc+1] += remainingError * (1/16.);
+
+
       //write group values into image
       for(MatIterator_<Vec3f> it = tile.begin<Vec3f>(), end = tile.end<Vec3f>(); it != end; ++it){
         auto pos = it.pos();
@@ -198,6 +233,9 @@ void groupByMask(Mat image, MaskConfig mc, uint64_t groups, Palette& palette, C 
       }
       onTileDone(rc,cc,avg);
     }
+    swap(currentRow, nextRow);
+    nextRow.assign(nrCols, {0,0,0});
+  }
 }
 
 void sharpen(Mat& img){
