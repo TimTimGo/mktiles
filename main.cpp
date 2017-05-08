@@ -199,13 +199,13 @@ void groupByMask(Mat image, MaskConfig mc, uint64_t groups, Palette& palette, C 
       }
       //quantize large circle
       //TODO: consider error from current row
-      avg[4] = palette.getSpecFromPalette(groupValues[4] + currentRow[cc], mc.groupIdToPart[4]);
-      Vec3f quantError = groupValues[4] - static_cast<Vec3f>(avg[4]->colorLab);
+      avg[5] = palette.getSpecFromPalette(groupValues[5] + currentRow[cc], mc.groupIdToPart[5]);
+      Vec3f quantError = groupValues[5] - static_cast<Vec3f>(avg[5]->colorLab);
       // propagate error to small circle
-      groupValues[5] += quantError;
+      groupValues[4] += quantError;
       // quantize small circle
-      avg[5] = palette.getSpecFromPalette(groupValues[5], mc.groupIdToPart[5]);
-      quantError = groupValues[5] - static_cast<Vec3f>(avg[5]->colorLab);
+      avg[4] = palette.getSpecFromPalette(groupValues[4], mc.groupIdToPart[4]);
+      quantError = groupValues[4] - static_cast<Vec3f>(avg[4]->colorLab);
       quantError /= 4;
       // quantize 1x1
       Vec3f remainingError;
