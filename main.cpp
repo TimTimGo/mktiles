@@ -205,14 +205,16 @@ void groupByMask(Mat image, MaskConfig mc, uint64_t groups, Palette& palette, C 
       Vec3f targetColor = groupValues[0]+err[0];
       avg[0] = palette.getSpecFromPalette(targetColor, mc.groupIdToPart[0]);
       Vec3f error = targetColor - static_cast<Vec3f>(avg[0]->colorLab);
-      nextRow[cc-1][3]+=error*(3/16.);
+      if(cc)
+        nextRow[cc-1][3]+=error*(3/16.);
       err[2]+=error*(5/16.);
       err[4]+=error*(7/16.);
       err[5]+=error*(1/16.);
 
       //quantize large circle
-      avg[4] = palette.getSpecFromPalette(groupValues[4] + err[4], mc.groupIdToPart[4]);
-      error = groupValues[4] - static_cast<Vec3f>(avg[4]->colorLab);
+      targetColor = groupValues[4] + err[4];
+      avg[4] = palette.getSpecFromPalette(targetColor, mc.groupIdToPart[4]);
+      error = targetColor - static_cast<Vec3f>(avg[4]->colorLab);
       err[2]+=error*(3/16.);
       nextRow[cc][4]+=error*(5/16.);
       err[5]+=error*(1/16.);
@@ -228,8 +230,9 @@ void groupByMask(Mat image, MaskConfig mc, uint64_t groups, Palette& palette, C 
       currentRow[cc+1][4]+=error*(1/16.);
 
       //quantize small circle
-      avg[5] = palette.getSpecFromPalette(groupValues[5] + err[5], mc.groupIdToPart[5]);
-      error = groupValues[5] - static_cast<Vec3f>(avg[5]->colorLab);
+      targetColor = groupValues[5] + err[5];
+      avg[5] = palette.getSpecFromPalette(targetColor, mc.groupIdToPart[5]);
+      error = targetColor - static_cast<Vec3f>(avg[5]->colorLab);
       err[1]+=error*(3/16.);
       err[3]+=error*(5/16.);
       currentRow[cc+1][0]+=error*(7/16.);
@@ -237,16 +240,19 @@ void groupByMask(Mat image, MaskConfig mc, uint64_t groups, Palette& palette, C 
 
 
       //quantize left lower 1x1
-      avg[1] = palette.getSpecFromPalette(groupValues[1] + err[1], mc.groupIdToPart[1]);
-      error = groupValues[1] - static_cast<Vec3f>(avg[1]->colorLab);
-      nextRow[cc-1][2]+=error*(3/16.);
+      targetColor = groupValues[1] + err[1];
+      avg[1] = palette.getSpecFromPalette(targetColor, mc.groupIdToPart[1]);
+      error = targetColor - static_cast<Vec3f>(avg[1]->colorLab);
+      if(cc)
+        nextRow[cc-1][2]+=error*(3/16.);
       nextRow[cc][0]+=error*(5/16.);
       nextRow[cc][4]+=error*(1/16.);
       err[3]+=error*(7/16.);
 
       //quantize right lower 1x1
-      avg[3] = palette.getSpecFromPalette(groupValues[3] + err[3], mc.groupIdToPart[3]);
-      error = groupValues[3] - static_cast<Vec3f>(avg[3]->colorLab);
+      targetColor = groupValues[3] + err[3];
+      avg[3] = palette.getSpecFromPalette(targetColor, mc.groupIdToPart[3]);
+      error = targetColor - static_cast<Vec3f>(avg[3]->colorLab);
       currentRow[cc+1][1]+=error*(7/16.);
       nextRow[cc][4]+=error*(3/16.);
       nextRow[cc][2]+=error*(5/16.);
