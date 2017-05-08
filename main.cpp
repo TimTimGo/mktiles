@@ -7,6 +7,7 @@
 #include <vector>
 #include <fstream>
 #include <cmath>
+#include <array>
 #include <highgui.h>
 
 using namespace cv;
@@ -162,10 +163,12 @@ void groupByMask(Mat image, MaskConfig mc, uint64_t groups, Palette& palette, C 
 
   // iterate over tiles of size mask
 
-  vector<Vec3f> currentRow;
-  vector<Vec3f> nextRow;
-  currentRow.assign(nrCols, {0,0,0});
-  nextRow.assign(nrCols, {0,0,0});
+  vector<array<Vec3f,6>> currentRow;
+  vector<array<Vec3f,6>> nextRow;
+  Vec3f emptyVec(0,0,0);
+  array<Vec3f,6> empty{emptyVec,emptyVec,emptyVec,emptyVec,emptyVec,emptyVec};
+  currentRow.assign(nrCols, empty);
+  nextRow.assign(nrCols,empty);
   for (int r = 0, rc=0; r < image.rows; r += tileHeight, rc++){
     for (int c = 0, cc=0; c < image.cols; c += tileWidth, cc++){
       Mat tile = image(Range(r, std::min(r + tileHeight, static_cast<uint64_t>(image.rows))),
@@ -197,30 +200,57 @@ void groupByMask(Mat image, MaskConfig mc, uint64_t groups, Palette& palette, C 
                 static_cast<float>(sum[i+1]/std::max(count[i+1], 1ull)),
                 static_cast<float>(sum[i+2]/std::max(count[i+2], 1ull))});
       }
-      //quantize large circle
-      //TODO: consider error from current row
-      avg[5] = palette.getSpecFromPalette(groupValues[5] + currentRow[cc], mc.groupIdToPart[5]);
-      Vec3f quantError = groupValues[5] - static_cast<Vec3f>(avg[5]->colorLab);
-      // propagate error to small circle
-      groupValues[4] += quantError;
-      // quantize small circle
-      avg[4] = palette.getSpecFromPalette(groupValues[4], mc.groupIdToPart[4]);
-      quantError = groupValues[4] - static_cast<Vec3f>(avg[4]->colorLab);
-      quantError /= 4;
-      // quantize 1x1
-      Vec3f remainingError;
-      for(int i=0;i<4;++i){
-        Vec3f targetColor = groupValues[i]+quantError;
-        avg[i] = palette.getSpecFromPalette(targetColor, mc.groupIdToPart[i]);
-        remainingError += targetColor - static_cast<Vec3f>(avg[i]->colorLab);
-      }
-      // propagate error
-      currentRow[cc+1] += remainingError * (7/16.);
-      if(cc > 0)
-        nextRow[cc-1] += remainingError * (3/16.);
-      nextRow[cc] += remainingError * (5/16.);
-      nextRow[cc+1] += remainingError * (1/16.);
+      //quantize left upper 1x1
+      auto& err = currentRow[cc];
+      Vec3f targetColor = groupValues[0]+err[0];
+      avg[0] = palette.getSpecFromPalette(targetColor, mc.groupIdToPart[0]);
+      Vec3f error = targetColor - static_cast<Vec3f>(avg[0]->colorLab);
+      nextRow[cc-1][3]+=error*(3/16.);
+      err[2]+=error*(5/16.);
+      err[4]+=error*(7/16.);
+      err[5]+=error*(1/16.);
 
+      //quantize large circle
+      avg[4] = palette.getSpecFromPalette(groupValues[4] + err[4], mc.groupIdToPart[4]);
+      error = groupValues[4] - static_cast<Vec3f>(avg[4]->colorLab);
+      err[2]+=error*(3/16.);
+      nextRow[cc][4]+=error*(5/16.);
+      err[5]+=error*(1/16.);
+      currentRow[cc+1][4]+=error*(7/16.);
+
+      //quantize right upper 1x1
+      targetColor = groupValues[2]+err[2];
+      avg[2] = palette.getSpecFromPalette(targetColor, mc.groupIdToPart[2]);
+      error = targetColor - static_cast<Vec3f>(avg[2]->colorLab);
+      currentRow[cc+1][0]+=error*(7/16.);
+      err[5]+=error*(3/16.);
+      err[3]+=error*(5/16.);
+      currentRow[cc+1][4]+=error*(1/16.);
+
+      //quantize small circle
+      avg[5] = palette.getSpecFromPalette(groupValues[5] + err[5], mc.groupIdToPart[5]);
+      error = groupValues[5] - static_cast<Vec3f>(avg[5]->colorLab);
+      err[1]+=error*(3/16.);
+      err[3]+=error*(5/16.);
+      currentRow[cc+1][0]+=error*(7/16.);
+      currentRow[cc+1][1]+=error*(1/16.);
+
+
+      //quantize left lower 1x1
+      avg[1] = palette.getSpecFromPalette(groupValues[1] + err[1], mc.groupIdToPart[1]);
+      error = groupValues[1] - static_cast<Vec3f>(avg[1]->colorLab);
+      nextRow[cc-1][2]+=error*(3/16.);
+      nextRow[cc][0]+=error*(5/16.);
+      nextRow[cc][4]+=error*(1/16.);
+      err[3]+=error*(7/16.);
+
+      //quantize right lower 1x1
+      avg[3] = palette.getSpecFromPalette(groupValues[3] + err[3], mc.groupIdToPart[3]);
+      error = groupValues[3] - static_cast<Vec3f>(avg[3]->colorLab);
+      currentRow[cc+1][1]+=error*(7/16.);
+      nextRow[cc][4]+=error*(3/16.);
+      nextRow[cc][2]+=error*(5/16.);
+      nextRow[cc+1][0]+=error*(1/16.);
 
       //write group values into image
       for(MatIterator_<Vec3f> it = tile.begin<Vec3f>(), end = tile.end<Vec3f>(); it != end; ++it){
@@ -234,7 +264,7 @@ void groupByMask(Mat image, MaskConfig mc, uint64_t groups, Palette& palette, C 
       onTileDone(rc,cc,avg);
     }
     swap(currentRow, nextRow);
-    nextRow.assign(nrCols, {0,0,0});
+    nextRow.assign(nrCols,empty);
   }
 }
 
