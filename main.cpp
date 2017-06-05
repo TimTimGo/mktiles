@@ -206,19 +206,19 @@ void groupByMask(Mat image, MaskConfig mc, uint64_t groups, Palette& palette, C 
       avg[0] = palette.getSpecFromPalette(targetColor, mc.groupIdToPart[0]);
       Vec3f error = targetColor - static_cast<Vec3f>(avg[0]->colorLab);
       if(cc)
-        nextRow[cc-1][3]+=error*(3/16.);
+        nextRow[cc-1][2]+=error*(3/16.);
       err[2]+=error*(5/16.);
-      err[4]+=error*(7/16.);
-      err[5]+=error*(1/16.);
+      //err[4]+=error*(7/16.);
+      err[5]+=error*(3/16.);
 
       //quantize large circle
       targetColor = groupValues[4] + err[4];
       avg[4] = palette.getSpecFromPalette(targetColor, mc.groupIdToPart[4]);
       error = targetColor - static_cast<Vec3f>(avg[4]->colorLab);
       err[2]+=error*(3/16.);
-      nextRow[cc][4]+=error*(5/16.);
-      err[5]+=error*(1/16.);
-      currentRow[cc+1][4]+=error*(7/16.);
+      nextRow[cc][4]+=error*(4/16.);
+      err[5]+=error*(4/16.);
+      currentRow[cc+1][4]+=error*(5/16.);
 
       //quantize right upper 1x1
       targetColor = groupValues[2]+err[2];
